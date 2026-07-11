@@ -1,11 +1,3 @@
-"""
-QBO Data Extractor - Paginação automática com respeito aos limites da API.
-
-Limites QBO:
-- MAXRESULTS máximo por query: 1000 registros
-- Rate limit: ~500 req/min por empresa; retorna 429 em caso de excesso
-- Backoff automático em caso de 429 (Throttle)
-"""
 import time
 import requests
 
@@ -23,19 +15,12 @@ def _fetch_page(client, entity: str, start: int, extra_where: str = "") -> list:
 
 
 def fetch_all_by_period(client, entity: str, date_field: str, start_date: str, end_date: str) -> list:
-    """
-    Busca registros de uma entidade filtrando por período em date_field.
-    start_date / end_date: formato 'YYYY-MM-DD'
-    """
+
     where = f"{date_field} >= '{start_date}' AND {date_field} <= '{end_date}'"
     return fetch_all(client, entity, extra_where=where)
 
 
 def fetch_all(client, entity: str, extra_where: str = "") -> list:
-    """
-    Busca todos os registros de uma entidade com paginação automática.
-    Respeita o limite de 1000 registros por página e faz backoff em 429.
-    """
     all_records = []
     start = 1
 
