@@ -1,13 +1,17 @@
 CREATE TABLE IF NOT EXISTS tb_payment (
-    id                          BIGINT PRIMARY KEY,
-    txndate                     DATE,
+    id                          VARCHAR(100),
     customerref_value           VARCHAR(100),
-    customerref_name            VARCHAR(100),
-    totalamt                    NUMERIC(14, 2),
-    unappliedamt                NUMERIC(14, 2),
-    currencyref_value           VARCHAR(100),
-    metadata_lastupdatedtime    TIMESTAMP,
-    id_empresa                   BIGINT
+    deposittoaccountref_value   VARCHAR(100),
+    processpayment              BOOLEAN,
+    txndate                     DATE,
+    line_amount                 NUMERIC(14, 2),
+    line_linkedtxn_txnid        VARCHAR(100),
+    line_linkedtxn_txntype      VARCHAR(100),
+    projectref_value            VARCHAR(100),
+    linkedtxn_txnid             VARCHAR(100),
+    linkedtxn_txntype           VARCHAR(100),
+    id_empresa                  BIGINT,
+    id_relaciona                VARCHAR(150)
 );
 
 CREATE INDEX IF NOT EXISTS ix_tb_payment_txndate ON tb_payment (txndate);

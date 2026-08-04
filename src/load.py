@@ -23,8 +23,7 @@ _TABLE_PK = {
 _TRANSACTIONAL_DATE_COL = {
     "tb_invoice": "txndate",
     "tb_payment": "txndate",
-    "tb_bill": "txndate",
-    "tb_transactionlist": "tx_date",
+    "tb_general_ledger": "tx_date",
 }
 
 

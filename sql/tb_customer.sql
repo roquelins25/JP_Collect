@@ -12,5 +12,6 @@ CREATE TABLE IF NOT EXISTS tb_customer (
     balance                           NUMERIC(14, 2),
     metadata_lastupdatedtime          TIMESTAMP,
     id_empresa                        BIGINT NOT NULL,
+    id_relaciona                      VARCHAR(150) NOT NULL,
     PRIMARY KEY (id, id_empresa)
 );

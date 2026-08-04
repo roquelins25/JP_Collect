@@ -2,21 +2,19 @@
 import logging
 import os
 import sys
-import fastparquet
 
 import pandas as pd
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from config.api_conect import QBOAPI
 from config.empresas import Empresa
-from qbo.extractor import fetch_all, fetch_all_by_period
+from qbo.extractor import fetch_all, fetch_all_by_period, fetch_general_ledger
 from transform import (
     TransformAccount,
-    TransformBill,
     TransformCustomer,
+    TransformGeneralLedger,
     TransformInvoice,
     TransformPayment,
-    TransformTransactionList,
     TransformVendor,
     TransformItem
 )
@@ -33,23 +31,25 @@ def _normalize(records: list[dict]) -> pd.DataFrame:
     return df
 
 
-def _com_id_empresa(df: pd.DataFrame, empresa: Empresa) -> pd.DataFrame:
+def _com_id_empresa(df: pd.DataFrame, empresa: Empresa, id_col: str = "id") -> pd.DataFrame:
     df["id_empresa"] = empresa.id_empresa
+    df["id_relaciona"] = df["id_empresa"].astype(str) + "_" + df[id_col].astype(str)
     return df
 
-# %%
+# %% ### CUSTOMERS
 class ColetorCustomers:
     def __init__(self, empresa: Empresa):
         self.empresa = empresa
 
     def process(self) -> pd.DataFrame:
         api = QBOAPI(self.empresa)
-        records = fetch_all(api, "Customer")
+        # Sem WHERE, a API só devolve customers ativos — precisa pedir os dois.
+        records = fetch_all(api, "Customer", extra_where="Active IN (true, false)")
         logger.info("Customer: %d registros extraídos", len(records))
         df = TransformCustomer().transform(_normalize(records))
         return _com_id_empresa(df, self.empresa)
 
-#%%
+#%% ### ACCOUNTS
 class ColetorAccounts:
     def __init__(self, empresa: Empresa):
         self.empresa = empresa
@@ -61,31 +61,32 @@ class ColetorAccounts:
         df = TransformAccount().transform(_normalize(records))
         return _com_id_empresa(df, self.empresa)
 
-#%%
+#%%  ### VENDORS
 class ColetorVendors:
     def __init__(self, empresa: Empresa):
         self.empresa = empresa
 
     def process(self) -> pd.DataFrame:
         api = QBOAPI(self.empresa)
-        records = fetch_all(api, "Vendor")
+        records = fetch_all(api, "Vendor", extra_where="Active IN (true, false)")
         logger.info("Vendor: %d registros extraídos", len(records))
         df = TransformVendor().transform(_normalize(records))
         return _com_id_empresa(df, self.empresa)
 
-# %%
+# %%   ### ITEMS
 class ColetorItem:
     def __init__(self, empresa: Empresa):
         self.empresa = empresa
 
     def process(self) -> pd.DataFrame:
         api = QBOAPI(self.empresa)
-        records = fetch_all(api, "Item")
+        records = fetch_all(api, "Item", extra_where="Active IN (true, false)")
         logger.info("Item: %d registros extraídos", len(records))
         df = TransformItem().transform(_normalize(records))
         return _com_id_empresa(df, self.empresa)
 
-#%%
+
+#%%   Invoices
 class ColetorInvoices:
     def __init__(self, empresa: Empresa, start_date: str, end_date: str):
         self.empresa = empresa
@@ -100,6 +101,7 @@ class ColetorInvoices:
         return _com_id_empresa(df, self.empresa)
 
 
+# %% #### Payments
 class ColetorPayments:
     def __init__(self, empresa: Empresa, start_date: str, end_date: str):
         self.empresa = empresa
@@ -111,10 +113,18 @@ class ColetorPayments:
         records = fetch_all_by_period(api, "Payment", "TxnDate", self.start_date, self.end_date)
         logger.info("Payment: %d registros extraídos [%s → %s]", len(records), self.start_date, self.end_date)
         df = TransformPayment().transform(_normalize(records))
-        return _com_id_empresa(df, self.empresa)
+        return  _com_id_empresa(df, self.empresa)
 
+# %%  General Ledger
+class ColetorGeneralLedger:
+    """Livro razão detalhado (relatório GeneralLedger), todas as contas.
 
-class ColetorBills:
+    Diferente das demais entidades: vem do endpoint /reports (não /query),
+    já com o valor por lançamento em vez do documento inteiro — por isso
+    cada linha aqui já é um lançamento contábil individual, não precisa de
+    _normalize()/json_normalize (o registro já é plano).
+    """
+
     def __init__(self, empresa: Empresa, start_date: str, end_date: str):
         self.empresa = empresa
         self.start_date = start_date
@@ -122,82 +132,14 @@ class ColetorBills:
 
     def process(self) -> pd.DataFrame:
         api = QBOAPI(self.empresa)
-        records = fetch_all_by_period(api, "Bill", "TxnDate", self.start_date, self.end_date)
-        logger.info("Bill: %d registros extraídos [%s → %s]", len(records), self.start_date, self.end_date)
-        for r in records:
-            r["id_empresa"] = self.empresa.id_empresa
-        return records  #TransformBill().transform(_normalize(records))
-
+        records = fetch_general_ledger(api, self.start_date, self.end_date)
+        logger.info(
+            "GeneralLedger: %d lançamentos extraídos [%s → %s]",
+            len(records), self.start_date, self.end_date,
+        )
+        if not records:
+            return pd.DataFrame()
+        df = TransformGeneralLedger().transform(pd.DataFrame(records))
+        return _com_id_empresa(df, self.empresa, id_col="txn_id")
 
 # %%
-class ColetorTransactionList:
-
-    _COLUMNS = ",".join([
-        # Conta
-        "acct_num_with_extn",
-        "account_name",
-
-        # Identificação da transação
-        "tx_date",
-        "txn_type",
-        "txn_num",
-        "doc_num",
-        "name",
-        "memo",
-        "other_account",
-        "journal_code_name",
-
-        # Valores
-        "subt_nat_amount",
-        "nat_open_bal",
-        "neg_open_bal",
-        "debt_amt",
-        "credit_amt",
-        "tax_amount",
-        "net_amount",
-        "quantity",
-        "rate",
-
-        # Datas
-        "due_date",
-        "paid_date",
-        "create_date",
-        "last_mod_date",
-
-        # Auditoria
-        "create_by",
-        "last_mod_by",
-
-        # Situação
-        "is_ar_paid",
-        "is_ap_paid",
-        "printed",
-
-        # Pagamento
-        "pmt_mthd",
-
-        # Item / mensagem
-        "item_name",
-        "cust_msg",
-    ])
-
-    def __init__(self, empresa: Empresa, start_date: str, end_date: str):
-        self.empresa = empresa
-        self.start_date = start_date
-        self.end_date = end_date
-
-    def process(self) -> pd.DataFrame:
-        api = QBOAPI(self.empresa)
-        rows = api.get_report(
-            "JournalReport",
-            params={
-                "start_date": self.start_date,
-                "end_date": self.end_date,
-                "columns": self._COLUMNS
-            },
-        )
-        logger.info("JournalReport: %d linhas extraídas [%s → %s]", len(rows), self.start_date, self.end_date)
-        for r in rows:
-            r["id_empresa"] = self.empresa.id_empresa
-
-        return  rows #TransformTransactionList().transform(pd.DataFrame(rows))

@@ -99,62 +99,114 @@ class TransformVendor(BaseTransform):
 
 class TransformInvoice(BaseTransform):
     _COLS = [
-        "id", "docnumber", "txndate", "duedate", "customerref_value",
-        "customerref_name", "totalamt", "balance", "currencyref_value",
-        "emailstatus", "metadata_lastupdatedtime",
+        "id", "docnumber", "txndate", "line_description",
+        "line_qty", "line_unitprice", "line_amount", "line_servicedate", "line_itemref_value",
+        "projectref_value", "customerref_value", "billaddr_id", "duedate", "totalamt", "balance"
     ]
 
+    @staticmethod
+    def _aggregate_line(lines: object) -> dict:
+        """Resume as linhas 'SalesItemLineDetail' de uma fatura em um único registro
+        (descarta SubTotalLineDetail; concatena/soma os itens quando há mais de um)."""
+        if not isinstance(lines, list):
+            return {}
+        items = [l for l in lines if l.get("DetailType") == "SalesItemLineDetail"]
+        if not items:
+            return {}
+        details = [i.get("SalesItemLineDetail", {}) or {} for i in items]
+        descriptions = [i.get("Description") for i in items if i.get("Description")]
+        service_dates = [d.get("ServiceDate") for d in details if d.get("ServiceDate")]
+        item_refs = sorted({d.get("ItemRef", {}).get("value") for d in details if d.get("ItemRef", {}).get("value")})
+        unit_prices = [d.get("UnitPrice") for d in details if d.get("UnitPrice") is not None]
+        return {
+            "description": " | ".join(descriptions),
+            "qty": sum(d.get("Qty") or 0 for d in details),
+            "unitprice": unit_prices[0] if len(unit_prices) == 1 else None,
+            "amount": sum(i.get("Amount") or 0 for i in items),
+            "servicedate": min(service_dates) if service_dates else None,
+            "itemref_value": "; ".join(item_refs),
+        }
+
     def transform(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+
+        if "line" in df.columns:
+            line_df = pd.json_normalize(df["line"].apply(self._aggregate_line))
+            line_df.columns = [f"line_{c}" for c in line_df.columns]
+            df = pd.concat([df.drop(columns=["line"]).reset_index(drop=True), line_df.reset_index(drop=True)], axis=1)
+
         df = self._select(df, self._COLS)
-        df = self._to_numeric(df, ["totalamt", "balance"])
-        df = self._to_date(df, ["txndate", "duedate"])
-        df = self._to_timestamp(df, ["metadata_lastupdatedtime"])
+        df = self._to_numeric(df, ["totalamt", "balance", "line_qty", "line_unitprice", "line_amount"])
+        df = self._to_date(df, ["txndate", "duedate", "line_servicedate"])
         return df
 
 
 class TransformPayment(BaseTransform):
     _COLS = [
-        "id", "txndate", "customerref_value", "customerref_name",
-        "totalamt", "unappliedamt", "currencyref_value", "metadata_lastupdatedtime",
+        "id","customerref_value", "deposittoaccountref_value", "processpayment", "txndate",
+        "line_amount", "line_linkedtxn_txnid", "line_linkedtxn_txntype", "projectref_value", "linkedtxn_txnid", "linkedtxn_txntype"
     ]
 
+    @staticmethod
+    def _flatten_line(line: object) -> dict:
+        """Um Payment.Line traz o valor aplicado e a fatura quitada (LinkedTxn)."""
+        if not isinstance(line, dict):
+            return {}
+        linked = line.get("LinkedTxn") or []
+        first = linked[0] if linked else {}
+        return {
+            "amount": line.get("Amount"),
+            "linkedtxn_txnid": first.get("TxnId"),
+            "linkedtxn_txntype": first.get("TxnType"),
+        }
+
+    @staticmethod
+    def _first_linkedtxn(linked: object) -> dict:
+        """LinkedTxn no nível raiz do Payment aponta pro Deposit gerado (quando existe)."""
+        if not isinstance(linked, list) or not linked:
+            return {}
+        return linked[0]
+
     def transform(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+
+        if "linkedtxn" in df.columns:
+            linked_df = pd.json_normalize(df["linkedtxn"].apply(self._first_linkedtxn))
+            linked_df.columns = [f"linkedtxn_{c.lower()}" for c in linked_df.columns]
+            df = pd.concat([df.drop(columns=["linkedtxn"]).reset_index(drop=True), linked_df.reset_index(drop=True)], axis=1)
+
+        if "line" in df.columns:
+            df = df.explode("line", ignore_index=True)
+            line_df = pd.json_normalize(df["line"].apply(self._flatten_line))
+            line_df.columns = [f"line_{c}" for c in line_df.columns]
+            df = pd.concat([df.drop(columns=["line"]).reset_index(drop=True), line_df.reset_index(drop=True)], axis=1)
+
         df = self._select(df, self._COLS)
-        df = self._to_numeric(df, ["totalamt", "unappliedamt"])
+        df = self._to_numeric(df, ["line_amount"])
         df = self._to_date(df, ["txndate"])
-        df = self._to_timestamp(df, ["metadata_lastupdatedtime"])
+        df = self._to_bool(df, ["processpayment"])
         return df
 
 
-class TransformBill(BaseTransform):
+class TransformGeneralLedger(BaseTransform):
     _COLS = [
-        "id", "txndate", "duedate", "vendorref_value", "vendorref_name",
-        "totalamt", "balance", "currencyref_value", "metadata_lastupdatedtime",
+        "tx_date", "txn_type", "txn_type_id", "doc_num", "is_adj", "name",
+        "name_id", "cust_name", "cust_name_id", "klass_name", "memo",
+        "split_acc", "account", "subt_nat_amount",
     ]
 
     def transform(self, df: pd.DataFrame) -> pd.DataFrame:
         df = self._select(df, self._COLS)
-        df = self._to_numeric(df, ["totalamt", "balance"])
-        df = self._to_date(df, ["txndate", "duedate"])
-        df = self._to_timestamp(df, ["metadata_lastupdatedtime"])
-        return df
-
-
-class TransformTransactionList(BaseTransform):
-    _COLS = [
-        "tx_date", "txn_type", "doc_num", "name", "memo",
-        "account_name", "other_account", "subt_nat_amount",
-        "create_date", "create_by", "last_mod_date", "last_mod_by",
-        "pmt_mthd", "due_date", "cust_msg",
-        "is_ar_paid", "is_ap_paid", "printed",
-        "debt_amt", "credit_amt",
-    ]
-
-    def transform(self, df: pd.DataFrame) -> pd.DataFrame:
-        df = self._select(df, self._COLS)
-        df = df.replace("", pd.NA)
-        df = self._to_numeric(df, ["subt_nat_amount", "debt_amt", "credit_amt"])
-        df = self._to_date(df, ["tx_date", "due_date"])
-        df = self._to_timestamp(df, ["create_date", "last_mod_date"])
-        df = self._to_bool(df, ["is_ar_paid", "is_ap_paid", "printed"])
+        df = df.rename(columns={
+            "txn_type_id": "txn_id",
+            "subt_nat_amount": "amount",
+            "cust_name": "customer",
+            "cust_name_id": "customer_id",
+        })
+        df = self._to_numeric(df, ["amount"])
+        # is_adj vem como texto "Yes"/"No" (coluna de relatório, não a API de
+        # entidades) — não dá pra usar o _to_bool genérico (espera bool nativo).
+        if "is_adj" in df.columns:
+            df["is_adj"] = df["is_adj"].map({"Yes": True, "No": False})
+        df = self._to_date(df, ["tx_date"])
         return df

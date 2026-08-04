@@ -8,5 +8,6 @@ CREATE TABLE IF NOT EXISTS tb_item (
     active                      BOOLEAN,
     metadata_lastupdatedtime    TIMESTAMP,
     id_empresa                  BIGINT NOT NULL,
+    id_relaciona                VARCHAR(150) NOT NULL,
     PRIMARY KEY (id, id_empresa)
 );
