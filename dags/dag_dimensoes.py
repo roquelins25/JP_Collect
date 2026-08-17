@@ -2,15 +2,19 @@ import sys
 from pathlib import Path
 from datetime import datetime, timedelta
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _isolated_import import import_project_modules
 
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 
-from config.empresas import get_empresas
-from src.extract import ColetorAccounts, ColetorCustomers, ColetorItem, ColetorVendors
-from src.load import process_table
+_config_empresas, _extract, _load = import_project_modules("config.empresas", "extract", "load")
+get_empresas = _config_empresas.get_empresas
+ColetorAccounts = _extract.ColetorAccounts
+ColetorCustomers = _extract.ColetorCustomers
+ColetorItem = _extract.ColetorItem
+ColetorVendors = _extract.ColetorVendors
+process_table = _load.process_table
 
 _DEFAULT_ARGS = {
     "owner": "jpgroup",
