@@ -4,16 +4,19 @@ import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _isolated_import import import_project_modules
 
 from airflow import DAG
 from airflow.models.param import Param
 from airflow.operators.python import PythonOperator
 
-from config.empresas import get_empresas
-from src.extract import ColetorGeneralLedger, ColetorInvoices, ColetorPayments
-from src.load import process_table
+_config_empresas, _extract, _load = import_project_modules("config.empresas", "extract", "load")
+get_empresas = _config_empresas.get_empresas
+ColetorGeneralLedger = _extract.ColetorGeneralLedger
+ColetorInvoices = _extract.ColetorInvoices
+ColetorPayments = _extract.ColetorPayments
+process_table = _load.process_table
 
 # Início operacional da empresa no QBO — mesmo valor de FULL_LOAD_START no main.py.
 _HISTORICO_INICIO = date(2026, 1, 1)
