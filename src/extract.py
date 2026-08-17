@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from config.api_conect import QBOAPI
 from config.empresas import Empresa
 from qbo.extractor import fetch_all, fetch_all_by_period, fetch_general_ledger
-from transform import (
+from src.transform import (
     TransformAccount,
     TransformCustomer,
     TransformGeneralLedger,

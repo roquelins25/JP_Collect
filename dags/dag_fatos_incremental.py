@@ -4,14 +4,13 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
-sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 
 from config.empresas import get_empresas
-from extract import ColetorGeneralLedger, ColetorInvoices, ColetorPayments
-from load import process_table
+from src.extract import ColetorGeneralLedger, ColetorInvoices, ColetorPayments
+from src.load import process_table
 
 _JANELA_DIAS = 90
 _MESES_GENERAL_LEDGER = 3  # meses "fechados" revisitados — o QBO permite editar lançamentos passados

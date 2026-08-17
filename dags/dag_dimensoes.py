@@ -4,14 +4,13 @@ from datetime import datetime, timedelta
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
-sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 
 from config.empresas import get_empresas
-from extract import ColetorAccounts, ColetorCustomers, ColetorItem, ColetorVendors
-from load import process_table
+from src.extract import ColetorAccounts, ColetorCustomers, ColetorItem, ColetorVendors
+from src.load import process_table
 
 _DEFAULT_ARGS = {
     "owner": "jpgroup",
