@@ -1,44 +1,38 @@
-"""
-QuickBooks OAuth2 - Autenticação e renovação de tokens
-"""
+# %%
 import base64
-import json
 import os
+import sys
 import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlencode, urlparse
 
 import requests
-from dotenv import load_dotenv, set_key
 
-load_dotenv()
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from config.empresas import Empresa, get_empresa_by_indice, save_tokens
 
-ENV_FILE = os.path.join(os.path.dirname(__file__), "..", ".env")
-
+#%%
 SANDBOX_BASE  = "https://sandbox-quickbooks.api.intuit.com"
 PROD_BASE     = "https://quickbooks.api.intuit.com"
 TOKEN_URL     = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer"
 AUTH_URL      = "https://appcenter.intuit.com/connect/oauth2"
 REVOKE_URL    = "https://developer.api.intuit.com/v2/oauth2/tokens/revoke"
 
-
-def _credentials_header() -> str:
-    client_id     = os.getenv("QBO_CLIENT_ID")
-    client_secret = os.getenv("QBO_CLIENT_SECRET")
-    encoded = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
+#%%
+def _credentials_header(empresa: Empresa) -> str:
+    encoded = base64.b64encode(f"{empresa.client_id}:{empresa.client_secret}".encode()).decode()
     return f"Basic {encoded}"
 
 
-def get_base_url() -> str:
-    env = os.getenv("QBO_ENVIRONMENT", "sandbox")
-    return SANDBOX_BASE if env == "sandbox" else PROD_BASE
+def get_base_url(empresa: Empresa) -> str:
+    return SANDBOX_BASE if empresa.environment == "sandbox" else PROD_BASE
 
-
+#%%
 # ── Passo 1: Gera a URL de autorização e abre no browser ──────────────────────
-def start_auth_flow():
+def start_auth_flow(empresa: Empresa):
     params = {
-        "client_id":     os.getenv("QBO_CLIENT_ID"),
-        "redirect_uri":  os.getenv("QBO_REDIRECT_URI"),
+        "client_id":     empresa.client_id,
+        "redirect_uri":  empresa.redirect_uri,
         "response_type": "code",
         "scope":         "com.intuit.quickbooks.accounting",
         "state":         "jp-group-qbo",
@@ -69,9 +63,9 @@ class _CallbackHandler(BaseHTTPRequestHandler):
         pass  # silencia logs do servidor
 
 
-def capture_callback() -> tuple[str, str]:
+def capture_callback(empresa: Empresa) -> tuple[str, str]:
     """Sobe servidor local na porta 8000 e aguarda o callback da Intuit."""
-    port = int(os.getenv("QBO_REDIRECT_URI", "http://localhost:8000").split(":")[-1].split("/")[0])
+    port = int(empresa.redirect_uri.split(":")[-1].split("/")[0])
     server = HTTPServer(("localhost", port), _CallbackHandler)
     print(f"⏳ Aguardando callback na porta {port}...")
     server.handle_request()
@@ -79,69 +73,70 @@ def capture_callback() -> tuple[str, str]:
 
 
 # ── Passo 3: Troca o code pelos tokens ────────────────────────────────────────
-def exchange_code_for_tokens(auth_code: str, realm_id: str):
+def exchange_code_for_tokens(empresa: Empresa, auth_code: str, realm_id: str):
     response = requests.post(
         TOKEN_URL,
         headers={
-            "Authorization":  _credentials_header(),
+            "Authorization":  _credentials_header(empresa),
             "Content-Type":   "application/x-www-form-urlencoded",
             "Accept":         "application/json",
         },
         data={
             "grant_type":   "authorization_code",
             "code":         auth_code,
-            "redirect_uri": os.getenv("QBO_REDIRECT_URI"),
+            "redirect_uri": empresa.redirect_uri,
         },
     )
     response.raise_for_status()
     tokens = response.json()
-    _save_tokens(tokens["access_token"], tokens["refresh_token"], realm_id)
+    save_tokens(empresa, tokens["access_token"], tokens["refresh_token"], realm_id)
     print("✅ Tokens salvos no .env com sucesso!")
     return tokens
 
 
 # ── Renovação automática ───────────────────────────────────────────────────────
-def refresh_access_token() -> str:
+def refresh_access_token(empresa: Empresa) -> str:
     """Renova o access_token usando o refresh_token. Salva no .env automaticamente."""
-    refresh_token = os.getenv("QBO_REFRESH_TOKEN")
-    if not refresh_token:
-        raise ValueError("QBO_REFRESH_TOKEN não encontrado no .env")
+    if not empresa.refresh_token:
+        raise ValueError(f"QBO_{empresa.indice}_REFRESH_TOKEN não encontrado no .env")
 
     response = requests.post(
         TOKEN_URL,
         headers={
-            "Authorization": _credentials_header(),
+            "Authorization": _credentials_header(empresa),
             "Content-Type":  "application/x-www-form-urlencoded",
             "Accept":        "application/json",
         },
         data={
             "grant_type":    "refresh_token",
-            "refresh_token": refresh_token,
+            "refresh_token": empresa.refresh_token,
         },
     )
     response.raise_for_status()
     tokens = response.json()
-    realm_id = os.getenv("QBO_REALM_ID")
-    _save_tokens(tokens["access_token"], tokens["refresh_token"], realm_id)
+    save_tokens(empresa, tokens["access_token"], tokens["refresh_token"], empresa.realm_id)
     print("🔄 Token renovado com sucesso!")
     return tokens["access_token"]
 
 
-def _save_tokens(access_token: str, refresh_token: str, realm_id: str):
-    env_path = os.path.abspath(ENV_FILE)
-    set_key(env_path, "QBO_ACCESS_TOKEN", access_token)
-    set_key(env_path, "QBO_REFRESH_TOKEN", refresh_token)
-    if realm_id:
-        set_key(env_path, "QBO_REALM_ID", realm_id)
-    # Recarrega as vars em memória
-    load_dotenv(override=True)
-
-
 # ── Fluxo completo de autenticação inicial ─────────────────────────────────────
-def authenticate():
-    """Executa o fluxo completo OAuth2 do zero."""
-    start_auth_flow()
-    auth_code, realm_id = capture_callback()
+def authenticate(empresa: Empresa):
+    """Executa o fluxo completo OAuth2 do zero para uma empresa."""
+    start_auth_flow(empresa)
+    auth_code, realm_id = capture_callback(empresa)
     if not auth_code:
         raise RuntimeError("Código de autorização não recebido.")
-    exchange_code_for_tokens(auth_code, realm_id)
+    exchange_code_for_tokens(empresa, auth_code, realm_id)
+
+
+# ── Uso manual: `python -m qbo.auth <indice>` (primeira vez) ou
+#    `python -m qbo.auth <indice> refresh` — <indice> é o N do bloco QBO_<N>_... no .env ──
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        raise SystemExit("Uso: python -m qbo.auth <indice_empresa> [refresh]")
+
+    _empresa = get_empresa_by_indice(int(sys.argv[1]))
+    if "refresh" in sys.argv[2:]:
+        refresh_access_token(_empresa)
+    else:
+        authenticate(_empresa)
