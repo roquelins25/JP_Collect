@@ -6,6 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _isolated_import import import_project_modules
+from _resilience import run_per_empresa
 
 from airflow import DAG
 from airflow.models.param import Param
@@ -35,28 +36,35 @@ _DEFAULT_ARGS = {
 def _run_invoice_mes(data_inicial: str, data_final: str, **context) -> None:
     if not context["params"]["executar_invoice"]:
         return
-    for empresa in get_empresas():
-        df = ColetorInvoices(empresa, data_inicial, data_final).process()
-        process_table("tb_invoice", df)
+
+    def _processar(empresa):
+        process_table("tb_invoice", ColetorInvoices(empresa, data_inicial, data_final).process())
+
+    run_per_empresa(get_empresas(), _processar, "tb_invoice")
     time.sleep(_RATE_LIMIT_SLEEP)
 
 
 def _run_payment_mes(data_inicial: str, data_final: str, **context) -> None:
     if not context["params"]["executar_payment"]:
         return
-    for empresa in get_empresas():
-        df = ColetorPayments(empresa, data_inicial, data_final).process()
-        process_table("tb_payment", df)
+
+    def _processar(empresa):
+        process_table("tb_payment", ColetorPayments(empresa, data_inicial, data_final).process())
+
+    run_per_empresa(get_empresas(), _processar, "tb_payment")
     time.sleep(_RATE_LIMIT_SLEEP)
 
 
 def _run_general_ledger_mes(data_inicial: str, data_final: str, **context) -> None:
     if not context["params"]["executar_general_ledger"]:
         return
-    for empresa in get_empresas():
+
+    def _processar(empresa):
         df = ColetorGeneralLedger(empresa, data_inicial, data_final).process()
         if not df.empty:
             process_table("tb_general_ledger", df)
+
+    run_per_empresa(get_empresas(), _processar, "tb_general_ledger")
     time.sleep(_RATE_LIMIT_SLEEP)
 
 

@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _isolated_import import import_project_modules
+from _resilience import run_per_empresa
 
 from airflow import DAG
 from airflow.operators.python import PythonOperator
@@ -27,27 +28,31 @@ _DEFAULT_ARGS = {
 
 
 def _run_tb_customer() -> None:
-    for empresa in get_empresas():
-        df = ColetorCustomers(empresa).process()
-        process_table("tb_customer", df)
+    def _processar(empresa):
+        process_table("tb_customer", ColetorCustomers(empresa).process())
+
+    run_per_empresa(get_empresas(), _processar, "tb_customer")
 
 
 def _run_tb_account() -> None:
-    for empresa in get_empresas():
-        df = ColetorAccounts(empresa).process()
-        process_table("tb_account", df)
+    def _processar(empresa):
+        process_table("tb_account", ColetorAccounts(empresa).process())
+
+    run_per_empresa(get_empresas(), _processar, "tb_account")
 
 
 def _run_tb_vendor() -> None:
-    for empresa in get_empresas():
-        df = ColetorVendors(empresa).process()
-        process_table("tb_vendor", df)
+    def _processar(empresa):
+        process_table("tb_vendor", ColetorVendors(empresa).process())
+
+    run_per_empresa(get_empresas(), _processar, "tb_vendor")
 
 
 def _run_tb_item() -> None:
-    for empresa in get_empresas():
-        df = ColetorItem(empresa).process()
-        process_table("tb_item", df)
+    def _processar(empresa):
+        process_table("tb_item", ColetorItem(empresa).process())
+
+    run_per_empresa(get_empresas(), _processar, "tb_item")
 
 
 with DAG(

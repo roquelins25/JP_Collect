@@ -4,6 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _isolated_import import import_project_modules
+from _resilience import run_per_empresa
 
 from airflow import DAG
 from airflow.operators.python import PythonOperator
@@ -32,18 +33,22 @@ def _run_invoice_incremental() -> None:
     hoje = date.today()
     data_inicial = (hoje - timedelta(days=_JANELA_DIAS)).strftime("%Y-%m-%d")
     data_final = hoje.strftime("%Y-%m-%d")
-    for empresa in get_empresas():
-        df = ColetorInvoices(empresa, data_inicial, data_final).process()
-        process_table("tb_invoice", df)
+
+    def _processar(empresa):
+        process_table("tb_invoice", ColetorInvoices(empresa, data_inicial, data_final).process())
+
+    run_per_empresa(get_empresas(), _processar, "tb_invoice")
 
 
 def _run_payment_incremental() -> None:
     hoje = date.today()
     data_inicial = (hoje - timedelta(days=_JANELA_DIAS)).strftime("%Y-%m-%d")
     data_final = hoje.strftime("%Y-%m-%d")
-    for empresa in get_empresas():
-        df = ColetorPayments(empresa, data_inicial, data_final).process()
-        process_table("tb_payment", df)
+
+    def _processar(empresa):
+        process_table("tb_payment", ColetorPayments(empresa, data_inicial, data_final).process())
+
+    run_per_empresa(get_empresas(), _processar, "tb_payment")
 
 
 def _n_meses_atras(d: date, n: int) -> date:
@@ -56,10 +61,13 @@ def _run_general_ledger_incremental() -> None:
     hoje = date.today()
     data_inicial = _n_meses_atras(hoje, _MESES_GENERAL_LEDGER - 1).strftime("%Y-%m-%d")
     data_final = hoje.strftime("%Y-%m-%d")
-    for empresa in get_empresas():
+
+    def _processar(empresa):
         df = ColetorGeneralLedger(empresa, data_inicial, data_final).process()
         if not df.empty:
             process_table("tb_general_ledger", df)
+
+    run_per_empresa(get_empresas(), _processar, "tb_general_ledger")
 
 
 with DAG(
