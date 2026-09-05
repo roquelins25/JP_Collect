@@ -32,6 +32,8 @@ def _normalize(records: list[dict]) -> pd.DataFrame:
 
 
 def _com_id_empresa(df: pd.DataFrame, empresa: Empresa, id_col: str = "id") -> pd.DataFrame:
+    if df.empty:
+        return df
     df["id_empresa"] = empresa.id_empresa
     df["id_relaciona"] = df["id_empresa"].astype(str) + "_" + df[id_col].astype(str)
     return df
