@@ -58,8 +58,8 @@ def _run_tb_item() -> None:
 with DAG(
     dag_id="jpgroup_dimensoes",
     default_args=_DEFAULT_ARGS,
-    description="Carga das tabelas dimensão JP Group (customer, account, vendor, item) a cada 4 horas",
-    schedule="0 */4 * * *",
+    description="Carga das tabelas dimensão JP Group (customer, account, vendor, item), 1x/dia às 7h (Brasília)",
+    schedule="0 10 * * *",  # 07:00 America/Sao_Paulo (UTC-3) = 10:00 UTC
     start_date=datetime(2026, 8, 1),
     catchup=False,
     tags=["jpgroup", "dimensoes"],

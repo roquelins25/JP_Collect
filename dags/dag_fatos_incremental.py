@@ -75,9 +75,9 @@ with DAG(
     default_args=_DEFAULT_ARGS,
     description=(
         "Carga incremental de tb_invoice/tb_payment (últimos 90 dias) e "
-        "tb_general_ledger (últimos 3 meses fechados), a cada 2 horas"
+        "tb_general_ledger (últimos 3 meses fechados), 3x/dia às 7h/12h/17h (Brasília)"
     ),
-    schedule="0 */2 * * *",
+    schedule="0 10,15,20 * * *",  # 07:00/12:00/17:00 America/Sao_Paulo (UTC-3) = 10:00/15:00/20:00 UTC
     start_date=datetime(2026, 8, 1),
     catchup=False,
     tags=["jpgroup", "incremental"],
