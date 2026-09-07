@@ -76,20 +76,24 @@ def _load_transacional(conn, df: pd.DataFrame, table: str, date_col: str) -> Non
     cols_str = ", ".join(cols)
     copy_sql = f"COPY {table} ({cols_str}) FROM STDIN WITH (FORMAT CSV, NULL '')"
 
+    # cada chamada carrega os dados de uma unica empresa (Coletor.process() e por
+    # empresa) - o DELETE precisa ser escopado por id_empresa, senao apaga (e nao
+    # reinsere) os dados de outras empresas cujas datas caiam no mesmo intervalo.
+    id_empresa = int(df["id_empresa"].iloc[0])
     data_min = pd.to_datetime(df[date_col]).min().date()
     data_max = pd.to_datetime(df[date_col]).max().date()
 
-    delete_sql = f"DELETE FROM {table} WHERE {date_col} BETWEEN %s AND %s"
+    delete_sql = f"DELETE FROM {table} WHERE {date_col} BETWEEN %s AND %s AND id_empresa = %s"
 
     with conn.cursor() as cur:
-        cur.execute(delete_sql, (data_min, data_max))
+        cur.execute(delete_sql, (data_min, data_max, id_empresa))
         deleted = cur.rowcount
         cur.copy_expert(copy_sql, _copy_to_buffer(df))
 
     conn.commit()
     logger.info(
-        "%s: %d registros deletados, %d inseridos (período %s → %s)",
-        table, deleted, len(df), data_min, data_max,
+        "%s (empresa %s): %d registros deletados, %d inseridos (período %s → %s)",
+        table, id_empresa, deleted, len(df), data_min, data_max,
     )
 
 
