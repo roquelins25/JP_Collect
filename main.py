@@ -20,7 +20,8 @@ from extract import (
     ColetorInvoices,
     ColetorVendors,
     ColetorItem,
-    ColetorPayments
+    ColetorPayments,
+    ColetorProfitAndLoss,
 )
 from load import process_table
 from qbo import month_ranges
@@ -116,6 +117,14 @@ def backfill_tb_general_ledger(empresa: Empresa) -> None:
 
 
 # %%
+def run_tb_profit_and_loss(empresa: Empresa) -> None:
+    """DRE mensal (Cash) de FULL_LOAD_START até hoje — uma chamada por empresa.
+    Reprocessa o período todo a cada execução (o QBO permite editar meses fechados)."""
+    df = ColetorProfitAndLoss(empresa, FULL_LOAD_START.isoformat(), _hoje()).process()
+    process_table("tb_profit_and_loss", df)
+
+
+# %%
 TASKS = [
     ("tb_customer", run_tb_customer),
     ("tb_account", run_tb_account),
@@ -124,6 +133,7 @@ TASKS = [
     ("tb_invoice", run_tb_invoice),
     ("tb_payment", run_tb_payment),
     ("tb_general_ledger", run_tb_general_ledger),
+    ("tb_profit_and_loss", run_tb_profit_and_loss),
 ]
 
 

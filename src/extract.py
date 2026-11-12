@@ -8,13 +8,14 @@ import pandas as pd
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from config.api_conect import QBOAPI
 from config.empresas import Empresa
-from qbo.extractor import fetch_all, fetch_all_by_period, fetch_general_ledger
+from qbo.extractor import fetch_all, fetch_all_by_period, fetch_general_ledger, fetch_profit_and_loss
 from transform import (
     TransformAccount,
     TransformCustomer,
     TransformGeneralLedger,
     TransformInvoice,
     TransformPayment,
+    TransformProfitAndLoss,
     TransformVendor,
     TransformItem
 )
@@ -143,5 +144,45 @@ class ColetorGeneralLedger:
             return pd.DataFrame()
         df = TransformGeneralLedger().transform(pd.DataFrame(records))
         return _com_id_empresa(df, self.empresa, id_col="txn_id")
+
+# %%  Profit and Loss
+class ColetorProfitAndLoss:
+    """DRE (relatório ProfitAndLoss) em formato longo: uma linha por conta e período.
+
+    Não tem id próprio por linha (conta + período), então não usa _com_id_empresa/
+    id_relaciona; a chave lógica é (id_empresa, accounting_method, account, period_start, row_type).
+    """
+
+    def __init__(
+        self,
+        empresa: Empresa,
+        start_date: str,
+        end_date: str,
+        accounting_method: str = "Cash",
+        summarize_column_by: str = "Month",
+    ):
+        self.empresa = empresa
+        self.start_date = start_date
+        self.end_date = end_date
+        self.accounting_method = accounting_method
+        self.summarize_column_by = summarize_column_by
+
+    def process(self) -> pd.DataFrame:
+        api = QBOAPI(self.empresa)
+        records = fetch_profit_and_loss(
+            api, self.start_date, self.end_date, self.accounting_method, self.summarize_column_by
+        )
+        logger.info(
+            "ProfitAndLoss: %d linhas extraídas [%s → %s]",
+            len(records), self.start_date, self.end_date,
+        )
+        if not records:
+            return pd.DataFrame()
+        df = TransformProfitAndLoss().transform(pd.DataFrame(records))
+        if df.empty:
+            return df
+        df.insert(0, "id_empresa", self.empresa.id_empresa)
+        df.insert(1, "accounting_method", self.accounting_method)
+        return df
 
 # %%

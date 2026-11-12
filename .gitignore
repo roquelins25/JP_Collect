@@ -11,5 +11,6 @@ wheels/
 .venv
 .env
 *.xlsx
-.Validacao
-*.Validacao
+
+# Arquivos de validacao manual (PDFs/planilhas de conferencia)
+Validacao/

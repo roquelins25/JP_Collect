@@ -188,6 +188,50 @@ class TransformPayment(BaseTransform):
         return df
 
 
+class TransformProfitAndLoss(BaseTransform):
+    _COLS = [
+        "account_id", "account", "group", "row_type", "column",
+        "period_start", "period_end", "amount",
+    ]
+    # Profundidade máxima da hierarquia de contas (ex: Expenses > Insurance >
+    # Properties Insurance > Refund Properties Insurance = 4 níveis).
+    _MAX_LEVELS = 5
+
+    def _add_levels(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Quebra o caminho da conta ("Income:Construction Services Income") em
+        account_lv1..account_lvN, na ordem pai → filho do relatório do QBO."""
+        partes = df["account"].str.split(":", expand=True)
+        if partes.shape[1] > self._MAX_LEVELS:
+            raise ValueError(
+                f"ProfitAndLoss: hierarquia com {partes.shape[1]} níveis, "
+                f"acima do máximo suportado ({self._MAX_LEVELS})."
+            )
+        for i in range(self._MAX_LEVELS):
+            df[f"account_lv{i + 1}"] = partes[i].str.strip() if i < partes.shape[1] else pd.NA
+        return df
+
+    def transform(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = self._select(df, self._COLS)
+        # "group" e "column" são palavras reservadas no Postgres.
+        df = df.rename(columns={"group": "account_group", "column": "period_label"})
+        # A coluna "Total" (sem period_start) repete a soma dos meses — descartada
+        # pra não duplicar o valor em somas. Exige summarize_column_by com datas
+        # (Month/Quarter/Year...), com "Total" puro tudo seria descartado.
+        df = df[df["period_start"].notna()].copy()
+        # Summary são totais calculados pelo QBO (Total for X, Gross Profit, Net
+        # Income...) — recalculáveis somando Data + Header; carregar duplicaria somas.
+        df = df[df["row_type"] != "Summary"]
+        df = self._to_numeric(df, ["amount"])
+        df = self._to_date(df, ["period_start", "period_end"])
+        # Célula vazia numa linha de conta = sem movimento no período.
+        df = df[df["amount"].notna()]
+        for col in ["account_id", "account", "account_group", "row_type", "period_label"]:
+            if col in df.columns:
+                df[col] = df[col].astype("string").str.strip()
+        df = self._add_levels(df)
+        return df.reset_index(drop=True)
+
+
 class TransformGeneralLedger(BaseTransform):
     _COLS = [
         "tx_date", "txn_type", "txn_type_id", "doc_num", "is_adj", "name",

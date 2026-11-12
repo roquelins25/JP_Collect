@@ -14,6 +14,7 @@ get_empresas = _config_empresas.get_empresas
 ColetorGeneralLedger = _extract.ColetorGeneralLedger
 ColetorInvoices = _extract.ColetorInvoices
 ColetorPayments = _extract.ColetorPayments
+ColetorProfitAndLoss = _extract.ColetorProfitAndLoss
 process_table = _load.process_table
 
 _JANELA_DIAS = 90
@@ -70,12 +71,28 @@ def _run_general_ledger_incremental() -> None:
     run_per_empresa(get_empresas(), _processar, "tb_general_ledger")
 
 
+def _run_profit_and_loss_incremental() -> None:
+    # DRE do ano corrente (1º de janeiro até hoje) — o ano ainda não fechou, então
+    # reprocessa tudo a cada execução (1 chamada à API por empresa).
+    hoje = date.today()
+    data_inicial = date(hoje.year, 1, 1).strftime("%Y-%m-%d")
+    data_final = hoje.strftime("%Y-%m-%d")
+
+    def _processar(empresa):
+        df = ColetorProfitAndLoss(empresa, data_inicial, data_final).process()
+        if not df.empty:
+            process_table("tb_profit_and_loss", df)
+
+    run_per_empresa(get_empresas(), _processar, "tb_profit_and_loss")
+
+
 with DAG(
     dag_id="jpgroup_incremental",
     default_args=_DEFAULT_ARGS,
     description=(
         "Carga incremental de tb_invoice/tb_payment (últimos 90 dias) e "
-        "tb_general_ledger (últimos 3 meses fechados), 3x/dia às 7h/12h/17h (Brasília)"
+        "tb_general_ledger (últimos 3 meses fechados) e tb_profit_and_loss (ano corrente, 1º/jan até hoje), "
+        "3x/dia às 7h/12h/17h (Brasília)"
     ),
     schedule="0 10,15,20 * * *",  # 07:00/12:00/17:00 America/Sao_Paulo (UTC-3) = 10:00/15:00/20:00 UTC
     start_date=datetime(2026, 8, 1),
@@ -96,4 +113,9 @@ with DAG(
         python_callable=_run_general_ledger_incremental,
     )
 
-    op_invoice >> op_payment >> op_general_ledger
+    op_profit_and_loss = PythonOperator(
+        task_id="profit_and_loss_ano_atual",
+        python_callable=_run_profit_and_loss_incremental,
+    )
+
+    op_invoice >> op_payment >> op_general_ledger >> op_profit_and_loss
