@@ -117,6 +117,100 @@ def _parse_general_ledger(raw: dict) -> list[dict]:
     return records
 
 
+def _parse_profit_and_loss(raw: dict) -> list[dict]:
+    """Achata o ProfitAndLoss (Sections aninhadas: Income, COGS, Expenses, ...) em
+    formato longo: uma linha por (conta, coluna de período).
+
+    Cada Section tem Header (nome/id da conta-pai), Rows (filhas, recursivo) e Summary
+    (total da seção, ex: "Total Income"). Linhas "Data" são contas folha; linhas do
+    Summary entram com row_type="Summary". "group" é o agrupador do QBO (Income,
+    COGS, GrossProfit, Expenses, NetOperatingIncome, OtherIncome, OtherExpenses,
+    NetOtherIncome, NetIncome). Colunas Money trazem StartDate/EndDate no MetaData
+    (úteis com summarize_column_by=Month/Quarter/Year).
+    """
+    columns = raw.get("Columns", {}).get("Column", [])
+    periodos = []  # (índice na ColData, título, start, end) só das colunas de valor
+    for i, col in enumerate(columns):
+        if col.get("ColType") != "Money":
+            continue
+        meta = {m.get("Name"): m.get("Value") for m in col.get("MetaData", [])}
+        periodos.append((i, col.get("ColTitle", f"col_{i}"), meta.get("StartDate"), meta.get("EndDate")))
+
+    records: list[dict] = []
+
+    def emit(col_data, path, group, row_type):
+        if not col_data:
+            return
+        conta = col_data[0]
+        for i, titulo, start, end in periodos:
+            if i >= len(col_data):
+                continue
+            valor = col_data[i].get("value", "")
+            records.append({
+                "account_id": conta.get("id", ""),
+                "account": path,
+                "group": group,
+                "row_type": row_type,
+                "column": titulo,
+                "period_start": start,
+                "period_end": end,
+                "amount": valor,
+            })
+
+    def walk(node_rows, path, group):
+        for row in node_rows:
+            group = row.get("group", group)
+            if "Rows" in row or "Summary" in row:
+                # Seções como GrossProfit/NetIncome vêm só com Summary, sem Rows.
+                header = row.get("Header", {}).get("ColData", [{}])
+                nome = header[0].get("value", "")
+                child_path = f"{path}:{nome}" if path and nome else (nome or path)
+                # Conta-pai com lançamentos próprios traz o saldo dela no Header
+                # (ex: "Auto Expenses 81.50"), fora das linhas das sub-contas.
+                if any(c.get("value") for c in header[1:]):
+                    emit(header, child_path, group, "Header")
+                walk(row.get("Rows", {}).get("Row", []), child_path, group)
+                if "Summary" in row:
+                    summary = row["Summary"].get("ColData", [])
+                    sum_path = child_path or (summary[0].get("value", "") if summary else "")
+                    emit(summary, sum_path, group, "Summary")
+                continue
+
+            col_data = row.get("ColData", [])
+            if not col_data:
+                continue
+            nome = col_data[0].get("value", "")
+            emit(col_data, f"{path}:{nome}" if path else nome, group, row.get("type", "Data"))
+
+    walk(raw.get("Rows", {}).get("Row", []), "", "")
+    return records
+
+
+def fetch_profit_and_loss(
+    client,
+    start_date: str,
+    end_date: str,
+    accounting_method: str = "Cash",
+    summarize_column_by: str = "Month",
+) -> list[dict]:
+    """Busca o relatório ProfitAndLoss (DRE) do período.
+
+    accounting_method: "Accrual" | "Cash".
+    summarize_column_by: Total, Month, Quarter, Year, Week, Days, Customers,
+    Vendors, Classes, Departments, Employees, ProductsAndServices.
+    """
+    raw = client._get(
+        "/reports/ProfitAndLoss",
+        params={
+            "start_date": start_date,
+            "end_date": end_date,
+            "accounting_method": accounting_method,
+            "summarize_column_by": summarize_column_by,
+        },
+    )
+    return _parse_profit_and_loss(raw)
+
+
 def fetch_general_ledger(client, start_date: str, end_date: str) -> list[dict]:
     """Busca o relatório GeneralLedger (livro razão) em blocos mensais.
 

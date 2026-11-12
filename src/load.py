@@ -24,6 +24,13 @@ _TRANSACTIONAL_DATE_COL = {
     "tb_invoice": "txndate",
     "tb_payment": "txndate",
     "tb_general_ledger": "tx_date",
+    "tb_profit_and_loss": "period_start",
+}
+
+# Colunas extras que escopam o DELETE além de id_empresa (cada chamada traz um único
+# valor delas) — senão carregar Cash apagaria o Accrual do mesmo período.
+_TRANSACTIONAL_SCOPE_COLS = {
+    "tb_profit_and_loss": ["accounting_method"],
 }
 
 
@@ -83,10 +90,14 @@ def _load_transacional(conn, df: pd.DataFrame, table: str, date_col: str) -> Non
     data_min = pd.to_datetime(df[date_col]).min().date()
     data_max = pd.to_datetime(df[date_col]).max().date()
 
-    delete_sql = f"DELETE FROM {table} WHERE {date_col} BETWEEN %s AND %s AND id_empresa = %s"
+    scope_cols = _TRANSACTIONAL_SCOPE_COLS.get(table, [])
+    scope_sql = "".join(f" AND {c} = %s" for c in scope_cols)
+    scope_vals = tuple(df[c].iloc[0] for c in scope_cols)
+
+    delete_sql = f"DELETE FROM {table} WHERE {date_col} BETWEEN %s AND %s AND id_empresa = %s{scope_sql}"
 
     with conn.cursor() as cur:
-        cur.execute(delete_sql, (data_min, data_max, id_empresa))
+        cur.execute(delete_sql, (data_min, data_max, id_empresa, *scope_vals))
         deleted = cur.rowcount
         cur.copy_expert(copy_sql, _copy_to_buffer(df))
 

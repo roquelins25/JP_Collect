@@ -18,6 +18,7 @@ get_empresas = _config_empresas.get_empresas
 ColetorGeneralLedger = _extract.ColetorGeneralLedger
 ColetorInvoices = _extract.ColetorInvoices
 ColetorPayments = _extract.ColetorPayments
+ColetorProfitAndLoss = _extract.ColetorProfitAndLoss
 process_table = _load.process_table
 
 logger = logging.getLogger(__name__)
@@ -74,6 +75,20 @@ def _run_general_ledger_mes(data_inicial: str, data_final: str, **context) -> li
     return erros
 
 
+def _run_profit_and_loss_periodo(data_inicial: str, data_final: str, **context) -> list:
+    if not context["params"]["executar_profit_and_loss"]:
+        return []
+
+    def _processar(empresa):
+        df = ColetorProfitAndLoss(empresa, data_inicial, data_final).process()
+        if not df.empty:
+            process_table("tb_profit_and_loss", df)
+
+    erros = run_per_empresa(get_empresas(), _processar, context["ti"].task_id, raise_on_error=False)
+    time.sleep(_RATE_LIMIT_SLEEP)
+    return erros
+
+
 def _resumo_falhas(task_ids: list[str], **context) -> None:
     """Roda por último (trigger_rule=all_done); consolida as falhas por
     empresa de todo o backfill e só aí falha a task, sem ter bloqueado
@@ -116,6 +131,7 @@ with DAG(
         "executar_invoice":        Param(True, type="boolean", description="Executar carga de tb_invoice"),
         "executar_payment":        Param(True, type="boolean", description="Executar carga de tb_payment"),
         "executar_general_ledger": Param(True, type="boolean", description="Executar carga de tb_general_ledger"),
+        "executar_profit_and_loss": Param(True, type="boolean", description="Executar carga de tb_profit_and_loss"),
     },
 ) as dag:
 
@@ -148,6 +164,22 @@ with DAG(
         if tasks:
             tasks[-1] >> t_invoice
         tasks.append(t_general_ledger)
+
+    # P&L: uma única carga do período todo (1 chamada à API por empresa, já com
+    # colunas mensais), em vez de uma task por mês como os demais fatos.
+    t_profit_and_loss = PythonOperator(
+        task_id="profit_and_loss_periodo_completo",
+        python_callable=_run_profit_and_loss_periodo,
+        op_kwargs={
+            "data_inicial": _HISTORICO_INICIO.strftime("%Y-%m-%d"),
+            "data_final": hoje.strftime("%Y-%m-%d"),
+        },
+        trigger_rule="all_done",
+    )
+    all_task_ids.append(t_profit_and_loss.task_id)
+    if tasks:
+        tasks[-1] >> t_profit_and_loss
+    tasks.append(t_profit_and_loss)
 
     t_resumo = PythonOperator(
         task_id="resumo_falhas",
